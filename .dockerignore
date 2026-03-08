@@ -1,0 +1,8 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+downloads
+test-mobile.mp4
+test-mobile-2.mp4
+yt-dlp.exe
