@@ -24,6 +24,10 @@ app.post('/download', async (req, res) => {
             return res.status(400).json({ error: parsed.error });
         }
 
+        if (isBlockedHost(parsed.value)) {
+            return res.status(400).json({ error: 'This app accepts direct file URLs only, not video-page links.' });
+        }
+
         const upstream = await fetch(parsed.value, {
             method: 'HEAD',
             redirect: 'follow'
@@ -35,6 +39,10 @@ app.post('/download', async (req, res) => {
 
         const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
         const contentLength = upstream.headers.get('content-length') || 'Unknown';
+        if (isWebPageContentType(contentType)) {
+            return res.status(400).json({ error: 'URL points to a web page, not a direct downloadable file.' });
+        }
+
         const fileName = inferFileName(parsed.value, upstream.headers.get('content-disposition'));
 
         res.json({
@@ -58,6 +66,10 @@ app.get('/download-file', async (req, res) => {
             return res.status(400).json({ error: parsed.error });
         }
 
+        if (isBlockedHost(parsed.value)) {
+            return res.status(400).json({ error: 'This app accepts direct file URLs only, not video-page links.' });
+        }
+
         const upstream = await fetch(parsed.value, {
             method: 'GET',
             redirect: 'follow'
@@ -68,6 +80,10 @@ app.get('/download-file', async (req, res) => {
         }
 
         const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+        if (isWebPageContentType(contentType)) {
+            return res.status(400).json({ error: 'URL points to a web page, not a direct downloadable file.' });
+        }
+
         const fileName = inferFileName(parsed.value, upstream.headers.get('content-disposition'));
 
         res.setHeader('Content-Type', contentType);
@@ -119,6 +135,23 @@ function parseAndValidateUrl(urlValue) {
     }
 
     return { ok: true, value: parsed.toString() };
+}
+
+function isBlockedHost(urlValue) {
+    const host = new URL(urlValue).hostname.toLowerCase();
+    const blocked = [
+        'youtube.com',
+        'www.youtube.com',
+        'm.youtube.com',
+        'youtu.be',
+        'music.youtube.com'
+    ];
+    return blocked.includes(host);
+}
+
+function isWebPageContentType(contentType) {
+    const value = String(contentType || '').toLowerCase();
+    return value.includes('text/html') || value.includes('application/xhtml+xml');
 }
 
 function inferFileName(urlValue, contentDisposition) {
