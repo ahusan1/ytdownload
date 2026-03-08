@@ -79,15 +79,8 @@ app.get('/download-file', async (req, res) => {
         // Get video info first
         const info = await ytDlpWrap.getVideoInfo(url);
         const title = (info.title || 'video').replace(/[^\w\s-]/gi, '').substring(0, 100);
-        const safeBaseName = title.trim().replace(/\s+/g, '_') || `video_${Date.now()}`;
-        const downloadsDir = path.join(__dirname, 'downloads');
-        const outputPath = path.join(downloadsDir, `${safeBaseName}.mp4`);
 
         console.log('Video title:', title);
-
-        if (!fs.existsSync(downloadsDir)) {
-            fs.mkdirSync(downloadsDir, { recursive: true });
-        }
 
         // Determine quality format
         let format = 'best[ext=mp4]/best';
@@ -111,31 +104,54 @@ app.get('/download-file', async (req, res) => {
 
         console.log('Using format:', format);
 
-        // Download to temp file first; this is more stable for mobile browsers.
-        await ytDlpWrap.execPromise([
+        // Stream directly to client so hosted platforms do not time out waiting for file preparation.
+        const ytDlpProcess = ytDlpWrap.exec([
             url,
             '-f', format,
-            '-o', outputPath,
+            '-o', '-',
             '--no-warnings',
             '--no-playlist'
         ]);
 
-        res.download(outputPath, `${title}.mp4`, (downloadError) => {
-            if (downloadError) {
-                console.error('Send file error:', downloadError);
-                if (!res.headersSent) {
-                    res.status(500).json({ error: 'Failed to send downloaded file' });
-                }
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${title}.mp4"`);
+
+        let stderrBuffer = '';
+
+        ytDlpProcess.stderr.on('data', (chunk) => {
+            if (stderrBuffer.length < 3000) {
+                stderrBuffer += chunk.toString();
+            }
+        });
+
+        ytDlpProcess.stdout.pipe(res);
+
+        ytDlpProcess.on('close', (code) => {
+            if (code === 0) {
+                console.log('Download completed successfully');
+                return;
             }
 
-            fs.unlink(outputPath, (unlinkError) => {
-                if (unlinkError) {
-                    console.error('Cleanup error:', unlinkError.message);
-                }
-            });
+            console.error('yt-dlp exited with code:', code, stderrBuffer.trim());
+            if (!res.headersSent) {
+                res.status(500).json({ error: 'Download failed on server' });
+            } else {
+                res.end();
+            }
+        });
 
-            if (!downloadError) {
-                console.log('Download completed successfully');
+        ytDlpProcess.on('error', (processError) => {
+            console.error('yt-dlp process error:', processError.message);
+            if (!res.headersSent) {
+                res.status(500).json({ error: 'Download process failed' });
+            } else {
+                res.end();
+            }
+        });
+
+        req.on('close', () => {
+            if (!ytDlpProcess.killed) {
+                ytDlpProcess.kill('SIGTERM');
             }
         });
 
