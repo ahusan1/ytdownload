@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Universal File Downloader</title>
+    <title>YouTube Metadata Viewer</title>
     <style>
         * {
             margin: 0;
@@ -66,35 +66,6 @@
 
         input[type="text"]:focus {
             outline: none;
-            border-color: #667eea;
-        }
-
-        .quality-selector {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-
-        .quality-btn {
-            padding: 10px;
-            border: 2px solid #ddd;
-            background: white;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s;
-            font-weight: 600;
-            color: #555;
-        }
-
-        .quality-btn:hover {
-            border-color: #667eea;
-            transform: translateY(-2px);
-        }
-
-        .quality-btn.active {
-            background: #667eea;
-            color: white;
             border-color: #667eea;
         }
 
@@ -193,15 +164,15 @@
 </head>
 <body>
     <div class="container">
-        <h1>File Downloader</h1>
-        <p class="subtitle">Download your own files from direct links on any device</p>
+        <h1>YouTube Metadata Viewer</h1>
+        <p class="subtitle">Get legal video details using YouTube Data API</p>
 
         <div class="input-group">
-            <label for="videoUrl">Direct File URL:</label>
-            <input type="text" id="videoUrl" placeholder="https://example.com/file.mp4" />
+            <label for="videoUrl">YouTube Video URL:</label>
+            <input type="text" id="videoUrl" placeholder="https://www.youtube.com/watch?v=..." />
         </div>
 
-        <button class="download-btn" id="downloadBtn">Download File</button>
+        <button class="download-btn" id="downloadBtn">Get Video Info</button>
 
         <div class="status" id="status"></div>
 
@@ -209,7 +180,7 @@
     </div>
 
     <script>
-        // Download button
+        // Fetch metadata button
         document.getElementById('downloadBtn').addEventListener('click', async function() {
             const videoUrl = document.getElementById('videoUrl').value.trim();
             const statusDiv = document.getElementById('status');
@@ -224,13 +195,13 @@
             // Validate URL
             if (!videoUrl) {
                 statusDiv.className = 'status error';
-                statusDiv.textContent = 'Please enter a direct file URL';
+                statusDiv.textContent = 'Please enter a YouTube URL';
                 return;
             }
 
-            if (!videoUrl.startsWith('http://') && !videoUrl.startsWith('https://')) {
+            if (!videoUrl.includes('youtube.com') && !videoUrl.includes('youtu.be')) {
                 statusDiv.className = 'status error';
-                statusDiv.textContent = 'Please enter a valid http/https URL';
+                statusDiv.textContent = 'Please enter a valid YouTube URL';
                 return;
             }
 
@@ -238,18 +209,16 @@
             downloadBtn.disabled = true;
             downloadBtn.innerHTML = 'Processing...<span class="spinner"></span>';
             statusDiv.className = 'status info';
-            statusDiv.textContent = 'Fetching video information...';
+            statusDiv.textContent = 'Fetching video metadata...';
 
             try {
                 // Send request to server
-                const response = await fetch('/download', {
+                const response = await fetch('/youtube-info', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        url: videoUrl
-                    })
+                    body: JSON.stringify({ url: videoUrl })
                 });
 
                 const data = await response.json();
@@ -260,32 +229,25 @@
 
                 // Show video info
                 videoInfoDiv.innerHTML = `
+                    ${data.thumbnail ? `<img src="${data.thumbnail}" alt="Thumbnail" style="width:100%;border-radius:8px;margin-bottom:10px;" />` : ''}
                     <h3>${data.title}</h3>
-                    <p><strong>File Size:</strong> ${data.duration}</p>
-                    <p><strong>Type:</strong> ${data.mime || 'Unknown'}</p>
+                    <p><strong>Channel:</strong> ${data.channelTitle}</p>
+                    <p><strong>Duration:</strong> ${data.duration}</p>
+                    <p><strong>Views:</strong> ${Number(data.viewCount || 0).toLocaleString()}</p>
+                    <p><strong>Likes:</strong> ${Number(data.likeCount || 0).toLocaleString()}</p>
                 `;
                 videoInfoDiv.classList.add('show');
 
-                // Start download
+                // Show success
                 statusDiv.className = 'status success';
-                statusDiv.textContent = 'Starting download...';
-
-                // Trigger download
-                const downloadLink = document.createElement('a');
-                downloadLink.href = `/download-file?url=${encodeURIComponent(videoUrl)}`;
-                downloadLink.download = data.title || 'download.bin';
-                downloadLink.click();
-
-                setTimeout(() => {
-                    statusDiv.textContent = 'Download started! Check your downloads folder.';
-                }, 1000);
+                statusDiv.textContent = 'Metadata loaded successfully.';
 
             } catch (error) {
                 statusDiv.className = 'status error';
                 statusDiv.textContent = 'Error: ' + error.message;
             } finally {
                 downloadBtn.disabled = false;
-                downloadBtn.innerHTML = 'Download File';
+                downloadBtn.innerHTML = 'Get Video Info';
             }
         });
     </script>
