@@ -1,194 +1,165 @@
 const express = require('express');
 const cors = require('cors');
-const YTDlpWrap = require('yt-dlp-wrap').default;
-const fs = require('fs');
-const path = require('path');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Use Windows binary locally and Linux binary in containers/servers.
-const ytDlpPath = process.platform === 'win32'
-    ? path.join(__dirname, 'yt-dlp.exe')
-    : '/usr/bin/yt-dlp';
-let ytDlpWrap;
-
-// Download yt-dlp binary if not exists
-async function initializeYtDlp() {
-    if (process.platform === 'win32' && !fs.existsSync(ytDlpPath)) {
-        console.log('Downloading yt-dlp binary...');
-        await YTDlpWrap.downloadFromGithub(ytDlpPath);
-        console.log('yt-dlp downloaded successfully!');
-    }
-
-    if (!fs.existsSync(ytDlpPath)) {
-        throw new Error(`yt-dlp binary not found at ${ytDlpPath}`);
-    }
-
-    ytDlpWrap = new YTDlpWrap(ytDlpPath);
-    console.log('yt-dlp initialized!');
-}
-
 app.use(cors());
 app.use(express.json());
-app.use(express.static('public'));
 
-// Serve the HTML file
 app.get('/', (req, res) => {
     res.sendFile(__dirname + '/index.html');
 });
 
-// Get video info endpoint
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok' });
+});
+
 app.post('/download', async (req, res) => {
     try {
-        const { url, quality } = req.body;
+        const { url } = req.body;
 
-        if (!url) {
-            return res.status(400).json({ error: 'URL is required' });
+        const parsed = parseAndValidateUrl(url);
+        if (!parsed.ok) {
+            return res.status(400).json({ error: parsed.error });
         }
 
-        // Get video info using yt-dlp
-        const info = await ytDlpWrap.getVideoInfo(url);
+        const upstream = await fetch(parsed.value, {
+            method: 'HEAD',
+            redirect: 'follow'
+        });
 
-        // Format duration
-        const duration = formatDuration(info.duration || 0);
+        if (!upstream.ok) {
+            return res.status(400).json({ error: 'Could not reach file URL' });
+        }
+
+        const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+        const contentLength = upstream.headers.get('content-length') || 'Unknown';
+        const fileName = inferFileName(parsed.value, upstream.headers.get('content-disposition'));
 
         res.json({
-            title: info.title || 'Unknown',
-            duration: duration,
-            quality: quality,
+            title: fileName,
+            duration: contentLength === 'Unknown' ? 'Unknown size' : formatBytes(Number(contentLength)),
+            quality: 'Original',
+            mime: contentType,
             success: true
         });
-
     } catch (error) {
-        console.error('Error:', error);
-        res.status(500).json({ error: 'Failed to fetch video information: ' + error.message });
+        console.error('Metadata error:', error.message);
+        res.status(500).json({ error: 'Failed to fetch file information' });
     }
 });
 
-// Download video endpoint
 app.get('/download-file', async (req, res) => {
     try {
-        const { url, quality } = req.query;
-
-        console.log('Download request for:', url, 'Quality:', quality);
-
-        if (!url) {
-            return res.status(400).json({ error: 'URL is required' });
+        const rawUrl = req.query.url;
+        const parsed = parseAndValidateUrl(rawUrl);
+        if (!parsed.ok) {
+            return res.status(400).json({ error: parsed.error });
         }
 
-        // Get video info first
-        const info = await ytDlpWrap.getVideoInfo(url);
-        const title = (info.title || 'video').replace(/[^\w\s-]/gi, '').substring(0, 100);
-
-        console.log('Video title:', title);
-
-        // Determine quality format
-        let format = 'best[ext=mp4]/best';
-        switch (quality) {
-            case '1080p':
-                format = 'best[height<=1080][ext=mp4]/best[height<=1080]/best';
-                break;
-            case '720p':
-                format = 'best[height<=720][ext=mp4]/best[height<=720]/best';
-                break;
-            case '480p':
-                format = 'best[height<=480][ext=mp4]/best[height<=480]/best';
-                break;
-            case '360p':
-                format = 'best[height<=360][ext=mp4]/best[height<=360]/best';
-                break;
-            case 'highest':
-            default:
-                format = 'best[ext=mp4]/best';
-        }
-
-        console.log('Using format:', format);
-
-        // Stream directly to client so hosted platforms do not time out waiting for file preparation.
-        const ytDlpProcess = ytDlpWrap.exec([
-            url,
-            '-f', format,
-            '-o', '-',
-            '--no-warnings',
-            '--no-playlist'
-        ]);
-
-        res.setHeader('Content-Type', 'application/octet-stream');
-        res.setHeader('Content-Disposition', `attachment; filename="${title}.mp4"`);
-
-        let stderrBuffer = '';
-
-        ytDlpProcess.stderr.on('data', (chunk) => {
-            if (stderrBuffer.length < 3000) {
-                stderrBuffer += chunk.toString();
-            }
+        const upstream = await fetch(parsed.value, {
+            method: 'GET',
+            redirect: 'follow'
         });
 
-        ytDlpProcess.stdout.pipe(res);
+        if (!upstream.ok || !upstream.body) {
+            return res.status(400).json({ error: 'Failed to download from source URL' });
+        }
 
-        ytDlpProcess.on('close', (code) => {
-            if (code === 0) {
-                console.log('Download completed successfully');
-                return;
+        const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+        const fileName = inferFileName(parsed.value, upstream.headers.get('content-disposition'));
+
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+
+        const reader = upstream.body.getReader();
+
+        const pump = async () => {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    res.end();
+                    break;
+                }
+                res.write(Buffer.from(value));
             }
+        };
 
-            console.error('yt-dlp exited with code:', code, stderrBuffer.trim());
+        pump().catch((streamError) => {
+            console.error('Stream error:', streamError.message);
             if (!res.headersSent) {
-                res.status(500).json({ error: 'Download failed on server' });
+                res.status(500).json({ error: 'Streaming failed' });
             } else {
                 res.end();
             }
         });
-
-        ytDlpProcess.on('error', (processError) => {
-            console.error('yt-dlp process error:', processError.message);
-            if (!res.headersSent) {
-                res.status(500).json({ error: 'Download process failed' });
-            } else {
-                res.end();
-            }
-        });
-
-        req.on('close', () => {
-            if (!ytDlpProcess.killed) {
-                ytDlpProcess.kill('SIGTERM');
-            }
-        });
-
     } catch (error) {
-        console.error('Download error:', error);
+        console.error('Download error:', error.message);
         if (!res.headersSent) {
-            res.status(500).json({ error: 'Download failed: ' + error.message });
+            res.status(500).json({ error: 'Download failed' });
         }
     }
 });
 
-// Helper function to format duration
-function formatDuration(seconds) {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = Math.floor(seconds % 60);
+function parseAndValidateUrl(urlValue) {
+    if (!urlValue || typeof urlValue !== 'string') {
+        return { ok: false, error: 'URL is required' };
+    }
 
-    if (hrs > 0) {
-        return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    } else {
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    let parsed;
+    try {
+        parsed = new URL(urlValue);
+    } catch {
+        return { ok: false, error: 'Invalid URL' };
+    }
+
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return { ok: false, error: 'Only http/https URLs are allowed' };
+    }
+
+    return { ok: true, value: parsed.toString() };
+}
+
+function inferFileName(urlValue, contentDisposition) {
+    const cd = contentDisposition || '';
+    const utfMatch = cd.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utfMatch && utfMatch[1]) {
+        return sanitizeFileName(decodeURIComponent(utfMatch[1]));
+    }
+
+    const plainMatch = cd.match(/filename="?([^";]+)"?/i);
+    if (plainMatch && plainMatch[1]) {
+        return sanitizeFileName(plainMatch[1]);
+    }
+
+    try {
+        const pathname = new URL(urlValue).pathname;
+        const base = pathname.split('/').pop() || 'download.bin';
+        return sanitizeFileName(base);
+    } catch {
+        return 'download.bin';
     }
 }
 
-app.listen(PORT, async () => {
-    try {
-        console.log('Starting server...');
-        await initializeYtDlp();
-        console.log(`
-YouTube Downloader Server Running
-Server: http://localhost:${PORT}
-Status: Ready to download videos
-Workspace: ${__dirname}
-Press Ctrl+C to stop the server
-        `);
-    } catch (startupError) {
-        console.error('Startup failed:', startupError.message);
-        process.exit(1);
+function sanitizeFileName(name) {
+    return name.replace(/[<>:"/\\|?*]+/g, '_').slice(0, 120) || 'download.bin';
+}
+
+function formatBytes(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+        return 'Unknown size';
     }
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let idx = 0;
+    while (size >= 1024 && idx < units.length - 1) {
+        size /= 1024;
+        idx += 1;
+    }
+    return `${size.toFixed(1)} ${units[idx]}`;
+}
+
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
 });

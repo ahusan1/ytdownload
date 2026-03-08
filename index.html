@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YouTube Video Downloader</title>
+    <title>Universal File Downloader</title>
     <style>
         * {
             margin: 0;
@@ -193,26 +193,15 @@
 </head>
 <body>
     <div class="container">
-        <h1>🎥 YouTube Downloader</h1>
-        <p class="subtitle">Download YouTube videos in high quality</p>
+        <h1>File Downloader</h1>
+        <p class="subtitle">Download your own files from direct links on any device</p>
 
         <div class="input-group">
-            <label for="videoUrl">YouTube Video URL:</label>
-            <input type="text" id="videoUrl" placeholder="https://www.youtube.com/watch?v=..." />
+            <label for="videoUrl">Direct File URL:</label>
+            <input type="text" id="videoUrl" placeholder="https://example.com/file.mp4" />
         </div>
 
-        <div class="input-group">
-            <label>Select Quality:</label>
-            <div class="quality-selector">
-                <button class="quality-btn active" data-quality="highest">Highest</button>
-                <button class="quality-btn" data-quality="1080p">1080p</button>
-                <button class="quality-btn" data-quality="720p">720p</button>
-                <button class="quality-btn" data-quality="480p">480p</button>
-                <button class="quality-btn" data-quality="360p">360p</button>
-            </div>
-        </div>
-
-        <button class="download-btn" id="downloadBtn">Download Video</button>
+        <button class="download-btn" id="downloadBtn">Download File</button>
 
         <div class="status" id="status"></div>
 
@@ -220,17 +209,6 @@
     </div>
 
     <script>
-        let selectedQuality = 'highest';
-
-        // Quality selector
-        document.querySelectorAll('.quality-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-                document.querySelectorAll('.quality-btn').forEach(b => b.classList.remove('active'));
-                this.classList.add('active');
-                selectedQuality = this.dataset.quality;
-            });
-        });
-
         // Download button
         document.getElementById('downloadBtn').addEventListener('click', async function() {
             const videoUrl = document.getElementById('videoUrl').value.trim();
@@ -246,13 +224,13 @@
             // Validate URL
             if (!videoUrl) {
                 statusDiv.className = 'status error';
-                statusDiv.textContent = 'Please enter a YouTube URL';
+                statusDiv.textContent = 'Please enter a direct file URL';
                 return;
             }
 
-            if (!videoUrl.includes('youtube.com') && !videoUrl.includes('youtu.be')) {
+            if (!videoUrl.startsWith('http://') && !videoUrl.startsWith('https://')) {
                 statusDiv.className = 'status error';
-                statusDiv.textContent = 'Please enter a valid YouTube URL';
+                statusDiv.textContent = 'Please enter a valid http/https URL';
                 return;
             }
 
@@ -270,8 +248,7 @@
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        url: videoUrl,
-                        quality: selectedQuality
+                        url: videoUrl
                     })
                 });
 
@@ -284,8 +261,8 @@
                 // Show video info
                 videoInfoDiv.innerHTML = `
                     <h3>${data.title}</h3>
-                    <p><strong>Duration:</strong> ${data.duration}</p>
-                    <p><strong>Quality:</strong> ${data.quality}</p>
+                    <p><strong>File Size:</strong> ${data.duration}</p>
+                    <p><strong>Type:</strong> ${data.mime || 'Unknown'}</p>
                 `;
                 videoInfoDiv.classList.add('show');
 
@@ -295,8 +272,8 @@
 
                 // Trigger download
                 const downloadLink = document.createElement('a');
-                downloadLink.href = `/download-file?url=${encodeURIComponent(videoUrl)}&quality=${selectedQuality}`;
-                downloadLink.download = data.title + '.mp4';
+                downloadLink.href = `/download-file?url=${encodeURIComponent(videoUrl)}`;
+                downloadLink.download = data.title || 'download.bin';
                 downloadLink.click();
 
                 setTimeout(() => {
@@ -308,7 +285,7 @@
                 statusDiv.textContent = 'Error: ' + error.message;
             } finally {
                 downloadBtn.disabled = false;
-                downloadBtn.innerHTML = 'Download Video';
+                downloadBtn.innerHTML = 'Download File';
             }
         });
     </script>
